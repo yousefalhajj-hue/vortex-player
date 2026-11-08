@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<!--
+  Vortex MultiView — hosted YouTube player.
+
+  YouTube refuses embedded players that have no web origin (error 153), and
+  an installed Tizen app runs from local files. This page is published on an
+  https site (e.g. GitHub Pages) and loaded by the app inside each window,
+  so YouTube sees a normal https page. The app controls it with postMessage.
+
+  Query: ?v=<videoId> | ?list=<playlistId> | ?channel=<channelId>  [&start=s] [&mute=0]
+  App → page:  { vmv: 1, cmd: 'play'|'pause'|'toggle'|'mute'|'unmute'|'volume'|'next'|'prev'|'seek', arg }
+  Page → app:  { vmv: 1, type: 'ready'|'state'|'error', data }
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Vortex Player</title>
+  <style>html, body, #p, iframe { margin: 0; width: 100%; height: 100%; border: 0; background: #000; overflow: hidden; }</style>
+</head>
+<body>
+  <div id="p"></div>
+  <script>
+  (function () {
+    'use strict';
+    var q = new URLSearchParams(location.search);
+    var ID = /^[A-Za-z0-9_-]{11}$/;
+    var LIST = /^(PL|UU|LL|FL|OL|RD)[A-Za-z0-9_-]{10,}$/;
+    var CH = /^UC[A-Za-z0-9_-]{22}$/;
+    var v = q.get('v'), list = q.get('list'), ch = q.get('channel');
+    var start = parseInt(q.get('start') || '0', 10) || 0;
+    var wantSound = q.get('mute') === '0';
+    var player = null;
+
+    function post(type, data) {
+      try { parent.postMessage({ vmv: 1, type: type, data: data }, '*'); } catch (e) { /* ignore */ }
+    }
+
+    var vars = {
+      autoplay: 1, controls: 0, disablekb: 1, fs: 0, iv_load_policy: 3, modestbranding: 1,
+      playsinline: 1, rel: 0, mute: 1, enablejsapi: 1, origin: location.origin
+    };
+    if (start) vars.start = start;
+
+    var events = {
+      onReady: function (e) {
+        post('ready');
+        if (wantSound) { e.target.unMute(); e.target.setVolume(100); }
+        e.target.playVideo();
+      },
+      onStateChange: function (e) { post('state', e.data); },
+      onError: function (e) { post('error', e.data); }
+    };
+
+    window.onYouTubeIframeAPIReady = function () {
+      if (ch && CH.test(ch) && !(v && ID.test(v)) && !(list && LIST.test(list))) {
+        // A channel's current live stream.
+        var f = document.createElement('iframe');
+        f.id = 'yt';
+        f.allow = 'autoplay; encrypted-media';
+        var qs = Object.keys(vars).map(function (k) { return k + '=' + encodeURIComponent(vars[k]); }).join('&');
+        f.src = 'https://www.youtube.com/embed/live_stream?channel=' + ch + '&' + qs;
+        document.getElementById('p').appendChild(f);
+        player = new YT.Player('yt', { events: events });
+        return;
+      }
+      var opts = { width: '100%', height: '100%', playerVars: vars, events: events };
+      if (v && ID.test(v)) opts.videoId = v;
+      if (list && LIST.test(list)) { vars.listType = 'playlist'; vars.list = list; vars.loop = 1; }
+      if (!opts.videoId && !vars.list) { post('error', 2); return; }
+      player = new YT.Player('p', opts);
+    };
+
+    window.addEventListener('message', function (e) {
+      if (e.source !== parent) return;
+      var m = e.data;
+      if (!m || m.vmv !== 1 || !m.cmd || !player || !player.getPlayerState) return;
+      try {
+        switch (m.cmd) {
+          case 'play': player.playVideo(); break;
+          case 'pause': player.pauseVideo(); break;
+          case 'toggle': if (player.getPlayerState() === 1) player.pauseVideo(); else player.playVideo(); break;
+          case 'mute': player.mute(); break;
+          case 'unmute': player.unMute(); break;
+          case 'volume': player.setVolume(Math.max(0, Math.min(100, +m.arg || 0))); break;
+          case 'next': player.nextVideo(); break;
+          case 'prev': player.previousVideo(); break;
+          case 'seek': player.seekTo(Math.max(0, player.getCurrentTime() + (+m.arg || 0)), true); break;
+        }
+      } catch (err) { /* player not ready */ }
+    });
+
+    var s = document.createElement('script');
+    s.src = 'https://www.youtube.com/iframe_api';
+    s.onerror = function () { post('error', 'api'); };
+    document.head.appendChild(s);
+  })();
+  </script>
+</body>
+</html>
