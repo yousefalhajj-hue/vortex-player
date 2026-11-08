@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<!--
+  Vortex MultiView — YouTube search / trending bridge.
+
+  Published next to index.html (GitHub Pages). It reads the owner's YouTube
+  Data API key from config.js (same folder) and answers the TV app over
+  postMessage, so viewers never see or enter a key. Restrict the key to
+  this site in Google Cloud ("HTTP referrers": https://<user>.github.io/*).
+
+  App → page:  { vmv: 1, api: 1, id, op: 'trending'|'search'|'channel', args }
+  Page → app:  { vmv: 1, api: 1, id, ok: true, data: [items] } | { …, ok: false, error }
+               { vmv: 1, api: 1, type: 'ready', hasKey }
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Vortex API</title>
+  <script src="config.js"></script>
+</head>
+<body>
+  <script>
+  (function () {
+    'use strict';
+    var KEY = (window.VORTEX_YT_KEY || '').trim();
+    if (KEY === 'PASTE_YOUR_KEY_HERE') KEY = '';
+    var BASE = 'https://www.googleapis.com/youtube/v3/';
+    var cache = {};
+
+    function post(msg) {
+      msg.vmv = 1; msg.api = 1;
+      try { parent.postMessage(msg, '*'); } catch (e) { /* ignore */ }
+    }
+
+    function region(r) { return /^[A-Z]{2}$/.test(r || '') ? r : 'US'; }
+
+    function item(id, sn) {
+      var th = (sn.thumbnails && (sn.thumbnails.medium || sn.thumbnails.high || sn.thumbnails['default'])) || {};
+      return {
+        videoId: id, title: sn.title || '', channel: sn.channelTitle || '',
+        thumb: th.url || ('https://i.ytimg.com/vi/' + id + '/mqdefault.jpg'),
+        live: sn.liveBroadcastContent === 'live'
+      };
+    }
+
+    function get(path, params) {
+      params.key = KEY;
+      var url = BASE + path + '?' + Object.keys(params).map(function (k) {
+        return k + '=' + encodeURIComponent(params[k]);
+      }).join('&');
+      var hit = cache[url];
+      if (hit && Date.now() - hit.at < 15 * 60 * 1000) return Promise.resolve(hit.data);
+      return fetch(url).then(function (r) {
+        return r.json().then(function (j) {
+          if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+          cache[url] = { at: Date.now(), data: j };
+          return j;
+        });
+      });
+    }
+
+    var OPS = {
+      trending: function (a) {
+        return get('videos', { part: 'snippet', chart: 'mostPopular', maxResults: 24, regionCode: region(a.region) })
+          .then(function (j) { return (j.items || []).map(function (v) { return item(v.id, v.snippet); }); });
+      },
+      search: function (a) {
+        var q = String(a.q || '').slice(0, 100);
+        if (!q) return Promise.resolve([]);
+        return get('search', { part: 'snippet', type: 'video', maxResults: 24, q: q, regionCode: region(a.region), safeSearch: 'moderate' })
+          .then(function (j) {
+            return (j.items || []).filter(function (v) { return v.id && v.id.videoId; })
+              .map(function (v) { return item(v.id.videoId, v.snippet); });
+          });
+      },
+      channel: function (a) {
+        if (!/^UC[A-Za-z0-9_-]{22}$/.test(a.channelId || '')) return Promise.resolve([]);
+        return get('playlistItems', { part: 'snippet', maxResults: 24, playlistId: 'UU' + a.channelId.slice(2) })
+          .then(function (j) {
+            return (j.items || []).filter(function (v) { return v.snippet && v.snippet.resourceId; })
+              .map(function (v) { return item(v.snippet.resourceId.videoId, v.snippet); });
+          });
+      }
+    };
+
+    window.addEventListener('message', function (e) {
+      if (e.source !== parent) return;
+      var m = e.data;
+      if (!m || m.vmv !== 1 || m.api !== 1 || !OPS[m.op]) return;
+      if (!KEY) { post({ id: m.id, ok: false, error: 'nokey' }); return; }
+      OPS[m.op](m.args || {}).then(function (data) {
+        post({ id: m.id, ok: true, data: data });
+      }).catch(function (err) {
+        post({ id: m.id, ok: false, error: String(err && err.message || err) });
+      });
+    });
+
+    post({ type: 'ready', hasKey: !!KEY });
+  })();
+  </script>
+</body>
+</html>
