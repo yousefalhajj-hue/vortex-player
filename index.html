@@ -17,7 +17,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>Vortex Player</title>
-  <style>html, body, #p, iframe { margin: 0; width: 100%; height: 100%; border: 0; background: #000; overflow: hidden; }</style>
+  <!-- Transparent on purpose: Samsung TVs draw video on a hardware plane BEHIND
+       the page, so any opaque background here hides the picture (sound only). -->
+  <style>html, body, #p, iframe { margin: 0; width: 100%; height: 100%; border: 0; background: transparent; overflow: hidden; }</style>
 </head>
 <body>
   <div id="p"></div>
